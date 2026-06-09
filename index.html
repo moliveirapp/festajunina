@@ -548,15 +548,26 @@
         document.getElementById("nome").value = "";
       }
 
+      // ⏱️ Converte timestamp do Supabase (sem timezone) para UTC correto
+      // O Supabase grava em UTC mas sem o 'Z' no final.
+      // new Date('2026-06-09 16:50:42') vira horario local em alguns browsers,
+      // entao forcamos leitura como UTC adicionando 'Z'.
+      function parsarTimestamp(ts) {
+        if (!ts) return null;
+        // Se ja tem info de timezone (+00, Z, etc.), usa direto
+        if (/Z$|[+-]\d{2}:?\d{2}$/.test(ts)) return new Date(ts).getTime();
+        // Senao, adiciona Z para forcar leitura como UTC
+        return new Date(ts.replace(" ", "T") + "Z").getTime();
+      }
+
       // ⏱️ calcular tempo restante
       function calcularTempoRestante(preso) {
-        // Prioriza hora_saida se existir; senão calcula a partir de hora_prisao + tempo
         let saida;
         if (preso.hora_saida) {
-          saida = new Date(preso.hora_saida).getTime();
+          saida = parsarTimestamp(preso.hora_saida);
         } else if (preso.hora_prisao && preso.tempo) {
-          saida =
-            new Date(preso.hora_prisao).getTime() + preso.tempo * 60 * 1000;
+          const prisao = parsarTimestamp(preso.hora_prisao);
+          saida = prisao + preso.tempo * 60 * 1000;
         } else {
           return 0;
         }
