@@ -378,32 +378,26 @@
               id="btn-scan"
               onclick="alternarScanner(false)"
             >
-              📷 Escanear via QR Code
+              📷 Escanear QR Code / Código de Barras
             </button>
             <div id="reader"></div>
           </div>
 
           <div class="campo">
-            <label for="matricula">Nº da Matrícula:</label>
-            <input
-              type="text"
-              id="matricula"
-              placeholder="Digite a matrícula do aluno..."
-              autocomplete="off"
-            />
-          </div>
-
-          <div class="campo">
-            <label for="nome">Nome do Aluno:</label>
+            <label for="busca-aluno">Nome ou Matrícula:</label>
             <input
               list="lista-alunos"
               type="text"
-              id="nome"
-              placeholder="Digite o nome do aluno..."
+              id="busca-aluno"
+              placeholder="Digite o nome ou número da matrícula..."
+              oninput="autoPreencherAluno()"
               autocomplete="off"
             />
             <datalist id="lista-alunos"></datalist>
           </div>
+          <!-- campos ocultos para manter compatibilidade -->
+          <input type="hidden" id="matricula" />
+          <input type="hidden" id="nome" />
 
           <button class="btn-prender" onclick="adicionarPresoManual()">
             Prender Caboclo! 🔥
@@ -454,8 +448,12 @@
 
       // carregar lista.json
       async function carregarAlunos() {
-        const res = await fetch("./lista.json");
-        alunos = await res.json();
+        try {
+          const res = await fetch("./lista.json");
+          alunos = await res.json();
+        } catch (e) {
+          alunos = [];
+        }
 
         const datalist = document.getElementById("lista-alunos");
         datalist.innerHTML = "";
@@ -467,37 +465,60 @@
         });
       }
 
-      // 🔍 auto preencher
-      document.getElementById("matricula").addEventListener("input", () => {
-        const valor = document.getElementById("matricula").value.trim();
-        const aluno = alunos.find((a) => a.matricula === valor);
-        if (aluno) document.getElementById("nome").value = aluno.nome;
-      });
+      // 🔍 auto preencher — input unificado
+      function autoPreencherAluno() {
+        const valor = document.getElementById("busca-aluno").value.trim();
 
-      document.getElementById("nome").addEventListener("input", () => {
-        const valor = document.getElementById("nome").value.toLowerCase();
-        const aluno = alunos.find((a) => a.nome.toLowerCase().includes(valor));
-        if (aluno) document.getElementById("matricula").value = aluno.matricula;
-      });
+        // Se parece ser número, busca por matrícula; senão, por nome
+        const ehNumero = /^\d+$/.test(valor);
+        let aluno = null;
+
+        if (ehNumero) {
+          aluno = alunos.find((a) => String(a.matricula) === valor);
+        } else {
+          aluno = alunos.find((a) =>
+            a.nome.toLowerCase().includes(valor.toLowerCase()),
+          );
+        }
+
+        if (aluno) {
+          document.getElementById("matricula").value = aluno.matricula;
+          document.getElementById("nome").value = aluno.nome;
+          // Preenche o input visível com o nome completo quando achar por matrícula
+          if (ehNumero) {
+            document.getElementById("busca-aluno").value = aluno.nome;
+          }
+        } else {
+          // Se não achou no JSON, usa o que foi digitado como nome
+          document.getElementById("nome").value = valor;
+          document.getElementById("matricula").value = "";
+        }
+      }
 
       // 🚀 buscar presos
       function buscarDadosDoServidor() {
+        const termoBusca = document.getElementById("busca")
+          ? document.getElementById("busca").value
+          : "";
         fetch(`${API_URL}/presos`)
           .then((res) => res.json())
           .then((dados) => atualizarPainelMobile(dados))
           .catch((err) => console.error(err));
       }
 
-      // 🔒 prender
+      // 🔒 prender — corrige hora_saida calculando no front
       function executarPrisao(matricula, nome) {
         const tempoMin = parseInt(document.getElementById("tempo").value);
+        const agora = new Date();
+        const horaSaida = new Date(agora.getTime() + tempoMin * 60 * 1000);
 
         fetch(`${API_URL}/prender`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             nome,
-            hora_prisao: new Date().toISOString(),
+            hora_prisao: agora.toISOString(),
+            hora_saida: horaSaida.toISOString(),
             tempo: tempoMin,
           }),
         }).then(() => buscarDadosDoServidor());
@@ -522,19 +543,26 @@
 
         executarPrisao(mat, nome);
 
+        document.getElementById("busca-aluno").value = "";
         document.getElementById("matricula").value = "";
         document.getElementById("nome").value = "";
       }
 
       // ⏱️ calcular tempo restante
-      function calcularTempoRestante(hora_saida) {
-        const agora = new Date().getTime();
-        const saida = new Date(hora_saida).getTime();
+      function calcularTempoRestante(preso) {
+        // Prioriza hora_saida se existir; senão calcula a partir de hora_prisao + tempo
+        let saida;
+        if (preso.hora_saida) {
+          saida = new Date(preso.hora_saida).getTime();
+        } else if (preso.hora_prisao && preso.tempo) {
+          saida =
+            new Date(preso.hora_prisao).getTime() + preso.tempo * 60 * 1000;
+        } else {
+          return 0;
+        }
 
-        const diff = saida - agora;
-
+        const diff = saida - new Date().getTime();
         if (diff <= 0) return 0;
-
         return Math.floor(diff / 1000);
       }
 
@@ -553,15 +581,17 @@
 
         container.innerHTML = "";
 
-        if (!presos || presos.length === 0) {
+        const ativos = presos ? presos.filter((p) => !p.solto) : [];
+
+        if (ativos.length === 0) {
           msg.style.display = "block";
           return;
         } else {
           msg.style.display = "none";
         }
 
-        presos.forEach((p) => {
-          const tempo = calcularTempoRestante(p.hora_saida);
+        ativos.forEach((p) => {
+          const tempo = calcularTempoRestante(p);
 
           const card = document.createElement("div");
           card.className = "card-preso";
@@ -576,10 +606,120 @@
                 <span class="cronometro">${formatarTempo(tempo)}</span>
             </div>
             <button class="btn-soltar" onclick="soltarPreso('${p.id}')">Liberar da Cadeia 👋</button>
-        `;
+          `;
 
           container.appendChild(card);
         });
+      }
+
+      // ── SCANNER ──────────────────────────────────────────────────────
+      let scannerAtivo = null;
+      let scannerParaBusca = false;
+
+      function alternarTela() {
+        const registro = document.getElementById("secao-registro");
+        const busca = document.getElementById("secao-busca");
+        const btn = document.getElementById("btn-mudar-tela");
+
+        const registroAtivo = registro.classList.contains("ativa");
+
+        // Para qualquer scanner aberto ao trocar de tela
+        pararScanner();
+
+        if (registroAtivo) {
+          registro.classList.remove("ativa");
+          busca.classList.add("ativa");
+          btn.textContent = "➕ Prender Novo Caboclo";
+        } else {
+          busca.classList.remove("ativa");
+          registro.classList.add("ativa");
+          btn.textContent = "🔍 Procurar Preso";
+        }
+      }
+
+      function pararScanner() {
+        if (scannerAtivo) {
+          scannerAtivo.stop().catch(() => {});
+          scannerAtivo = null;
+        }
+        document.getElementById("reader").style.display = "none";
+        document.getElementById("reader-busca").style.display = "none";
+        document.getElementById("btn-scan").textContent =
+          "📷 Escanear QR Code / Código de Barras";
+        const btnBusca = document.getElementById("btn-scan-busca");
+        if (btnBusca) btnBusca.textContent = "📷 Pesquisar por QR Code";
+      }
+
+      function alternarScanner(paraBusca) {
+        scannerParaBusca = paraBusca;
+        const readerId = paraBusca ? "reader-busca" : "reader";
+        const btnId = paraBusca ? "btn-scan-busca" : "btn-scan";
+
+        // Se já está rodando, para
+        if (scannerAtivo) {
+          pararScanner();
+          return;
+        }
+
+        const readerEl = document.getElementById(readerId);
+        readerEl.style.display = "block";
+        document.getElementById(btnId).textContent = "❌ Fechar Câmera";
+
+        scannerAtivo = new Html5Qrcode(readerId);
+
+        const config = {
+          fps: 10,
+          qrbox: { width: 250, height: 180 },
+          // Habilita leitura de códigos de barras além de QR
+          formatsToSupport: [
+            Html5QrcodeSupportedFormats.QR_CODE,
+            Html5QrcodeSupportedFormats.CODE_128,
+            Html5QrcodeSupportedFormats.CODE_39,
+            Html5QrcodeSupportedFormats.EAN_13,
+            Html5QrcodeSupportedFormats.EAN_8,
+            Html5QrcodeSupportedFormats.UPC_A,
+            Html5QrcodeSupportedFormats.UPC_E,
+            Html5QrcodeSupportedFormats.ITF,
+            Html5QrcodeSupportedFormats.DATA_MATRIX,
+          ],
+        };
+
+        // Prefere câmera traseira no celular
+        scannerAtivo
+          .start(
+            { facingMode: "environment" },
+            config,
+            (codigoLido) => {
+              pararScanner();
+              onCodigoEscaneado(codigoLido.trim(), paraBusca);
+            },
+            () => {}, // erros de frame são normais, ignora
+          )
+          .catch((err) => {
+            console.error("Erro ao abrir câmera:", err);
+            pararScanner();
+            alert("Não foi possível abrir a câmera. Verifique as permissões.");
+          });
+      }
+
+      function onCodigoEscaneado(codigo, paraBusca) {
+        if (paraBusca) {
+          // Na tela de busca, filtra a lista
+          document.getElementById("busca").value = codigo;
+          buscarDadosDoServidor();
+        } else {
+          // Na tela de registro, preenche matrícula/nome
+          const aluno = alunos.find((a) => String(a.matricula) === codigo);
+          if (aluno) {
+            document.getElementById("busca-aluno").value = aluno.nome;
+            document.getElementById("matricula").value = aluno.matricula;
+            document.getElementById("nome").value = aluno.nome;
+          } else {
+            document.getElementById("busca-aluno").value = codigo;
+            document.getElementById("matricula").value = codigo;
+            document.getElementById("nome").value = "";
+          }
+        }
       }
 
       // init
