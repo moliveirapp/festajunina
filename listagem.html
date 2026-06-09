@@ -83,7 +83,7 @@
         container.innerHTML = "";
 
         dados.forEach((p) => {
-          const tempo = calcularTempoRestante(p.hora_saida);
+          const tempo = calcularTempoRestante(p);
 
           const div = document.createElement("div");
           div.className = "card";
@@ -119,9 +119,24 @@
         });
       }
 
-      // ⏱️ tempo restante
-      function calcularTempoRestante(hora_saida) {
-        const diff = new Date(hora_saida).getTime() - new Date().getTime();
+      // ⏱️ Parse timestamp do Supabase (sem timezone) forçando UTC
+      function parsarTimestamp(ts) {
+        if (!ts) return null;
+        if (/Z$|[+-]\d{2}:?\d{2}$/.test(ts)) return new Date(ts).getTime();
+        return new Date(ts.replace(" ", "T") + "Z").getTime();
+      }
+
+      // ⏱️ tempo restante — usa hora_saida se existir, senão hora_prisao + tempo
+      function calcularTempoRestante(preso) {
+        let saida;
+        if (preso.hora_saida) {
+          saida = parsarTimestamp(preso.hora_saida);
+        } else if (preso.hora_prisao && preso.tempo) {
+          saida = parsarTimestamp(preso.hora_prisao) + preso.tempo * 60 * 1000;
+        } else {
+          return 0;
+        }
+        const diff = saida - new Date().getTime();
         if (diff <= 0) return 0;
         return Math.floor(diff / 1000);
       }
