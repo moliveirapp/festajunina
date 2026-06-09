@@ -528,7 +528,10 @@
 
       // ⏱️ calcular tempo restante
       function calcularTempoRestante(hora_saida) {
-        const diff = new Date(hora_saida) - new Date();
+        const agora = new Date().getTime();
+        const saida = new Date(hora_saida).getTime();
+
+        const diff = saida - agora;
 
         if (diff <= 0) return 0;
 
